@@ -1,0 +1,29 @@
+name: Actualizar Feed Dynamic Yield
+on:
+  schedule:
+    - cron: '0 6 * * *' # Corre a las 06:00 UTC (03:00 AM ART)
+  workflow_dispatch: # Permite ejecutarlo a mano
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          
+      - name: Instalar dependencias
+        run: npm install
+        
+      - name: Generar Feed
+        run: node index.js
+        
+      - name: Deploy a GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_files: feed_unificado.csv
