@@ -13,7 +13,6 @@ async function run() {
     console.log('🚀 Iniciando unificación...');
 
     try {
-        // 1. Descargar y parsear XML de Marketplace (ahora con trampa anti-caché)
         console.log('📥 Descargando XML de Marketplace...');
         const xmlRes = await axios.get(`${CONFIG.XML_MARKETPLACE_URL}?nocache=${Date.now()}`);
         const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
@@ -21,10 +20,8 @@ async function run() {
         const mktpItems = jsonObj.DY.channel.item;
         console.log(`✅ ${mktpItems.length} productos de marketplace listos.`);
 
-        // 2. Preparar el Stream de salida
         const outputStream = fs.createWriteStream(CONFIG.OUTPUT_FILE);
 
-        // 3. Descargar CSV de Firme y procesar línea por línea (Streaming)
         console.log('📥 Procesando CSV de Firme (86k filas)...');
         const csvRes = await axios({
             method: 'get',
@@ -36,10 +33,9 @@ async function run() {
         let isFirstLine = true;
         let remainder = '';
 
-        // Procesador de chunks para no saturar la memoria
         for await (const chunk of csvRes.data) {
             const lines = (remainder + chunk.toString()).split(/\r?\n/);
-            remainder = lines.pop(); // Guardar línea incompleta para el próximo chunk
+            remainder = lines.pop(); 
 
             for (let line of lines) {
                 if (isFirstLine) {
@@ -47,15 +43,12 @@ async function run() {
                     outputStream.write(line + '\n');
                     isFirstLine = false;
                 } else {
-                    // Optimización de peso: false->0, true->1
-                    let optimizedLine = line.replace(/;false(?=;|\r|\n|$)/gi, ';0')
-                                            .replace(/;true(?=;|\r|\n|$)/gi, ';1');
-                    outputStream.write(optimizedLine + '\n');
+                    // Pasamos la línea intacta para que mantenga los true/false originales
+                    outputStream.write(line + '\n');
                 }
             }
         }
 
-        // 4. Transformar y concatenar Marketplace al final
         console.log('➕ Agregando productos de Marketplace al final...');
         for (const item of mktpItems) {
             const row = buildMktpRow(item, headers);
@@ -79,15 +72,14 @@ function parseArsPrice(p) {
 
 function buildMktpRow(item, headers) {
     const price = parseArsPrice(item.sale_price || item.price);
-    const inStock = item.availability === 'in stock' ? '1' : '0';
+    // Acá le mandamos true / false como nos exige Dynamic Yield
+    const inStock = item.availability === 'in stock' ? 'true' : 'false'; 
     const brand = item.brand || '';
 
-    // 💡 Lógica de Cuotas para la columna Ribbons (Vacío por defecto)
     let ribbonValue = ''; 
     
     if (item.installment) {
         let cuotas = item.installment.months || item.installment; 
-        
         if (cuotas && !isNaN(cuotas) && parseInt(cuotas) > 1) {
             ribbonValue = `${cuotas} Cuotas sin interés`;
         }
@@ -101,7 +93,7 @@ function buildMktpRow(item, headers) {
             case 'url': return item.link;
             case 'image_url': return item.image_link;
             case 'categories': return `"${(item.product_type || 'Marketplace').replace(/ > /g, '|')}"`;
-            case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : ''; // Si no hay cuotas, queda vacío
+            case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : '';
             case 'keywords': return `"${brand}"`;
             case 'price': return price;
             case 'in_stock': return inStock;
