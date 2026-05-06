@@ -18,7 +18,7 @@ async function run() {
         const xmlRes = await axios.get(CONFIG.XML_MARKETPLACE_URL);
         const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
         const jsonObj = parser.parse(xmlRes.data);
-        const mktpItems = jsonObj.rss.channel.item;
+        const mktpItems = jsonObj.DY.channel.item;
         console.log(`✅ ${mktpItems.length} productos de marketplace listos.`);
 
         // 2. Preparar el Stream de salida
