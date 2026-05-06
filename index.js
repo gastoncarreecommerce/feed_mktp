@@ -13,9 +13,9 @@ async function run() {
     console.log('🚀 Iniciando unificación...');
 
     try {
-        // 1. Descargar y parsear XML de Marketplace (es chico, entra en memoria)
+        // 1. Descargar y parsear XML de Marketplace (ahora con trampa anti-caché)
         console.log('📥 Descargando XML de Marketplace...');
-        const xmlRes = await axios.get(CONFIG.XML_MARKETPLACE_URL);
+        const xmlRes = await axios.get(`${CONFIG.XML_MARKETPLACE_URL}?nocache=${Date.now()}`);
         const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
         const jsonObj = parser.parse(xmlRes.data);
         const mktpItems = jsonObj.DY.channel.item;
@@ -86,10 +86,8 @@ function buildMktpRow(item, headers) {
     let ribbonValue = ''; 
     
     if (item.installment) {
-        // fast-xml-parser limpia la "g:", así que buscamos "months"
         let cuotas = item.installment.months || item.installment; 
         
-        // Validamos que sea un número y mayor a 1
         if (cuotas && !isNaN(cuotas) && parseInt(cuotas) > 1) {
             ribbonValue = `${cuotas} Cuotas sin interés`;
         }
