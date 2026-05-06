@@ -27,12 +27,11 @@ jobs:
       - name: Subir a Dynamic Yield via SFTP
         env:
           PRIVATE_KEY: ${{ secrets.DY_SFTP_PRIVATE_KEY }}
-          HOST: ${{ secrets.DY_SFTP_HOST }}
           USER: ${{ secrets.DY_SFTP_USERNAME }}
         run: |
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
           mkdir -p ~/.ssh
-          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+          ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
           echo "put feed_unificado.csv" > sftp_batch
-          sftp -b sftp_batch -i private_key.pem $USER@$HOST
+          sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
