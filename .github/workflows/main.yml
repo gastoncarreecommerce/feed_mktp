@@ -21,17 +21,18 @@ jobs:
       - name: Instalar dependencias
         run: npm install
         
-      - name: Generar Feed y Comprimir
-        run: |
-          node index.js
-          gzip feed_unificado.csv
+      - name: Generar Feed Unificado
+        run: node index.js
         
-      - name: Publicar en GitHub Releases
-        uses: ncipollo/release-action@v1
-        with:
-          tag: "latest"
-          name: "Feed Dynamic Yield"
-          body: "Feed unificado actualizado y comprimido en formato GZ."
-          artifacts: "feed_unificado.csv.gz"
-          allowUpdates: true
-          replacesArtifacts: true
+      - name: Subir a Dynamic Yield via SFTP
+        env:
+          PRIVATE_KEY: ${{ secrets.DY_SFTP_PRIVATE_KEY }}
+          HOST: ${{ secrets.DY_SFTP_HOST }}
+          USER: ${{ secrets.DY_SFTP_USERNAME }}
+        run: |
+          echo "$PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          mkdir -p ~/.ssh
+          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+          echo "put feed_unificado.csv" > sftp_batch
+          sftp -b sftp_batch -i private_key.pem $USER@$HOST
