@@ -29,11 +29,10 @@ jobs:
           PRIVATE_KEY: ${{ secrets.DY_SFTP_PRIVATE_KEY }}
           USER: ${{ secrets.DY_SFTP_USERNAME }}
         run: |
-          mv feed_unificado.csv ExportDynamicYield.csv
+          mv feed_unificado.csv productfeed.csv
           echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
           mkdir -p ~/.ssh
           ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
-          echo "ls -la" > sftp_batch
-          echo "put ExportDynamicYield.csv" >> sftp_batch
+          echo "put productfeed.csv" > sftp_batch
           sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
