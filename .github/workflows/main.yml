@@ -4,6 +4,10 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+# Esto le da permiso explícito para publicar la página
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,17 +17,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           
       - name: Instalar dependencias
         run: npm install
         
-      - name: Generar Feed
-        run: node index.js
+      - name: Generar Feed y mover a carpeta publica
+        run: |
+          node index.js
+          mkdir -p public
+          mv feed_unificado.csv public/
         
       - name: Deploy a GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          publish_files: feed_unificado.csv
+          publish_dir: ./public
