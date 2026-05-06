@@ -34,5 +34,6 @@ jobs:
           chmod 600 private_key.pem
           mkdir -p ~/.ssh
           ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
-          echo "put ExportDynamicYield.csv" > sftp_batch
+          echo "ls -la" > sftp_batch
+          echo "put ExportDynamicYield.csv" >> sftp_batch
           sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
