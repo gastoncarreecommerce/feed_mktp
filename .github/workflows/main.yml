@@ -4,7 +4,6 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
-# Esto le da permiso explícito para publicar la página
 permissions:
   contents: write
 
@@ -22,14 +21,15 @@ jobs:
       - name: Instalar dependencias
         run: npm install
         
-      - name: Generar Feed y mover a carpeta publica
-        run: |
-          node index.js
-          mkdir -p public
-          mv feed_unificado.csv public/
+      - name: Generar Feed
+        run: node index.js
         
-      - name: Deploy a GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Publicar en GitHub Releases (Soporta +100MB)
+        uses: ncipollo/release-action@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
+          tag: "latest"
+          name: "Feed Dynamic Yield"
+          body: "Feed unificado actualizado automáticamente."
+          artifacts: "feed_unificado.csv"
+          allowUpdates: true
+          replacesArtifacts: true
