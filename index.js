@@ -5,8 +5,7 @@ const { XMLParser } = require('fast-xml-parser');
 const CONFIG = {
     CSV_FIRME_URL: 'https://serv-10.carrefour.com.ar:446/DYN/routes/GCP_DYN_DownloadExport',
     XML_MARKETPLACE_URL: 'https://www.carrefour.com.ar/XMLData/test-dy.xml',
-    OUTPUT_FILE: 'feed_unificado.csv',
-    SEPARATOR: ';'
+    OUTPUT_FILE: 'feed_unificado.csv'
 };
 
 async function run() {
@@ -32,6 +31,7 @@ async function run() {
         let headers = [];
         let isFirstLine = true;
         let remainder = '';
+        let fileSeparator = ';'; // Separador por defecto
 
         for await (const chunk of csvRes.data) {
             const lines = (remainder + chunk.toString()).split(/\r?\n/);
@@ -39,11 +39,16 @@ async function run() {
 
             for (let line of lines) {
                 if (isFirstLine) {
-                    headers = line.split(CONFIG.SEPARATOR).map(h => h.trim());
+                    // 💡 Detector automático de separador
+                    if (line.includes('\t')) fileSeparator = '\t';
+                    else if (line.includes(';')) fileSeparator = ';';
+                    else if (line.includes(',')) fileSeparator = ',';
+                    
+                    headers = line.split(fileSeparator).map(h => h.trim());
                     outputStream.write(line + '\n');
                     isFirstLine = false;
                 } else {
-                    // Pasamos la línea intacta para que mantenga los true/false originales
+                    // Dejamos pasar la línea intacta (mantiene los true/false originales)
                     outputStream.write(line + '\n');
                 }
             }
@@ -51,7 +56,8 @@ async function run() {
 
         console.log('➕ Agregando productos de Marketplace al final...');
         for (const item of mktpItems) {
-            const row = buildMktpRow(item, headers);
+            // Le pasamos el separador detectado para que no se desalinee
+            const row = buildMktpRow(item, headers, fileSeparator);
             outputStream.write(row + '\n');
         }
 
@@ -70,14 +76,13 @@ function parseArsPrice(p) {
     return parseFloat(cleaned).toFixed(2);
 }
 
-function buildMktpRow(item, headers) {
+function buildMktpRow(item, headers, fileSeparator) {
     const price = parseArsPrice(item.sale_price || item.price);
-    // Acá le mandamos true / false como nos exige Dynamic Yield
+    // Acá le mandamos el texto 'true' y 'false' como exige DY
     const inStock = item.availability === 'in stock' ? 'true' : 'false'; 
     const brand = item.brand || '';
 
     let ribbonValue = ''; 
-    
     if (item.installment) {
         let cuotas = item.installment.months || item.installment; 
         if (cuotas && !isNaN(cuotas) && parseInt(cuotas) > 1) {
@@ -98,13 +103,14 @@ function buildMktpRow(item, headers) {
             case 'price': return price;
             case 'in_stock': return inStock;
             default:
+                // Duplicamos precio y stock en las columnas de las sucursales
                 if (h.startsWith('lng:carrefourar')) {
                     if (h.endsWith(':price')) return price;
                     if (h.endsWith(':in_stock')) return inStock;
                 }
                 return '';
         }
-    }).join(CONFIG.SEPARATOR);
+    }).join(fileSeparator);
 }
 
 run();
