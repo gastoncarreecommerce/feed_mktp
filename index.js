@@ -82,6 +82,19 @@ function buildMktpRow(item, headers) {
     const inStock = item.availability === 'in stock' ? '1' : '0';
     const brand = item.brand || '';
 
+    // 💡 Lógica de Cuotas para la columna Ribbons (Vacío por defecto)
+    let ribbonValue = ''; 
+    
+    if (item.installment) {
+        // fast-xml-parser limpia la "g:", así que buscamos "months"
+        let cuotas = item.installment.months || item.installment; 
+        
+        // Validamos que sea un número y mayor a 1
+        if (cuotas && !isNaN(cuotas) && parseInt(cuotas) > 1) {
+            ribbonValue = `${cuotas} Cuotas sin interés`;
+        }
+    }
+
     return headers.map(h => {
         switch (h) {
             case 'sku': return item.id;
@@ -90,7 +103,7 @@ function buildMktpRow(item, headers) {
             case 'url': return item.link;
             case 'image_url': return item.image_link;
             case 'categories': return `"${(item.product_type || 'Marketplace').replace(/ > /g, '|')}"`;
-            case 'ribbons': return 'Marketplace';
+            case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : ''; // Si no hay cuotas, queda vacío
             case 'keywords': return `"${brand}"`;
             case 'price': return price;
             case 'in_stock': return inStock;
