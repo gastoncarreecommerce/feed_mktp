@@ -21,15 +21,17 @@ jobs:
       - name: Instalar dependencias
         run: npm install
         
-      - name: Generar Feed
-        run: node index.js
+      - name: Generar Feed y Comprimir
+        run: |
+          node index.js
+          gzip feed_unificado.csv
         
-      - name: Publicar en GitHub Releases (Soporta +100MB)
+      - name: Publicar en GitHub Releases
         uses: ncipollo/release-action@v1
         with:
           tag: "latest"
           name: "Feed Dynamic Yield"
-          body: "Feed unificado actualizado automáticamente."
-          artifacts: "feed_unificado.csv"
+          body: "Feed unificado actualizado y comprimido en formato GZ."
+          artifacts: "feed_unificado.csv.gz"
           allowUpdates: true
           replacesArtifacts: true
