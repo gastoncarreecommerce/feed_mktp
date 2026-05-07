@@ -1,7 +1,8 @@
 name: Actualizar Feed Dynamic Yield
 on:
-  schedule:
-    - cron: '0 6 * * *'
+  # Apagamos el cron temporalmente para que solo corra cuando vos le des play
+  # schedule:
+  #   - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -23,23 +24,26 @@ jobs:
         
       - name: Generar Feed Unificado
         run: node index.js
+
+      - name: Renombrar archivo
+        run: mv feed_unificado.csv productfeed.csv
         
-      - name: Subir a Dynamic Yield via SFTP
-        env:
-          PRIVATE_KEY: ${{ secrets.DY_SFTP_PRIVATE_KEY }}
-          USER: ${{ secrets.DY_SFTP_USERNAME }}
-        run: |
-          mv feed_unificado.csv productfeed.csv
-          echo "$PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          mkdir -p ~/.ssh
-          ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
-          echo "put productfeed.csv" > sftp_batch
-          sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
+      # 🛑 MODO TEST: APAGAMOS LA SUBIDA A DYNAMIC YIELD
+      # - name: Subir a Dynamic Yield via SFTP
+      #   env:
+      #     PRIVATE_KEY: ${{ secrets.DY_SFTP_PRIVATE_KEY }}
+      #     USER: ${{ secrets.DY_SFTP_USERNAME }}
+      #   run: |
+      #     echo "$PRIVATE_KEY" > private_key.pem
+      #     chmod 600 private_key.pem
+      #     mkdir -p ~/.ssh
+      #     ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
+      #     echo "put productfeed.csv" > sftp_batch
+      #     sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
 
       - name: Guardar CSV para descargar manual
         uses: actions/upload-artifact@v4
         with:
-          name: Mi_Feed_Dynamic_Yield
+          name: Mi_Feed_Dynamic_Yield_TEST
           path: productfeed.csv
           retention-days: 5
