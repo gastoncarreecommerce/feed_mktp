@@ -8,6 +8,60 @@ const CONFIG = {
     OUTPUT_FILE: 'feed_unificado.csv'
 };
 
+// 👑 FUNCIÓN GOD-TIER: Bypass a la API de VTEX para buscar promos reales
+async function getRealInstallments(mktpItems) {
+    console.log('🕵️‍♂️ Iniciando escaneo profundo de cuotas reales en VTEX...');
+    const realInstallmentsMap = {};
+    const skuIds = [];
+
+    // 1. Extraer los ID de SKU (ej: idsku=277379)
+    for (const item of mktpItems) {
+        const match = item.link.match(/idsku=(\d+)/);
+        if (match) skuIds.push(match[1]);
+    }
+
+    // 2. Agrupar en lotes de 40 para no saturar a Carrefour (evita el Error 504)
+    const chunkSize = 40;
+    for (let i = 0; i < skuIds.length; i += chunkSize) {
+        const chunk = skuIds.slice(i, i + chunkSize);
+        const queryParams = chunk.map(id => `fq=skuId:${id}`).join('&');
+        const apiUrl = `https://www.carrefour.com.ar/api/catalog_system/pub/products/search?${queryParams}`;
+
+        try {
+            const res = await axios.get(apiUrl);
+            
+            // 3. Revisar el JSON interno del checkout
+            for (const product of res.data) {
+                if (!product.items || !product.items[0]) continue;
+                
+                const skuId = product.items[0].itemId;
+                const installments = product.items[0].sellers[0]?.commertialOffer?.Installments || [];
+                
+                // 4. Buscar la cuota máxima matemática que NO tenga interés (InterestRate = 0)
+                let maxCuotasSinInteres = 0;
+                for (const inst of installments) {
+                    if (inst.InterestRate === 0 && inst.NumberOfInstallments > maxCuotasSinInteres) {
+                        maxCuotasSinInteres = inst.NumberOfInstallments;
+                    }
+                }
+                
+                // Si encontramos cuotas reales, lo guardamos en nuestro diccionario
+                if (maxCuotasSinInteres > 1) {
+                    realInstallmentsMap[skuId] = maxCuotasSinInteres;
+                }
+            }
+        } catch (e) {
+            console.log(`⚠️ Advertencia leve: No se pudo verificar un lote de la API.`);
+        }
+        
+        // Pausa de 300 milisegundos entre lote y lote para ser indetectables
+        await new Promise(r => setTimeout(r, 300)); 
+    }
+    
+    console.log(`✅ Escaneo completo. ¡Se descubrieron cuotas reales en ${Object.keys(realInstallmentsMap).length} productos!`);
+    return realInstallmentsMap;
+}
+
 async function run() {
     console.log('🚀 Iniciando unificación...');
 
@@ -18,6 +72,9 @@ async function run() {
         const jsonObj = parser.parse(xmlRes.data);
         const mktpItems = jsonObj.DY.channel.item;
         console.log(`✅ ${mktpItems.length} productos de marketplace listos.`);
+
+        // 👑 Ejecutamos nuestro escáner profundo de cuotas
+        const realInstallmentsMap = await getRealInstallments(mktpItems);
 
         const outputStream = fs.createWriteStream(CONFIG.OUTPUT_FILE);
 
@@ -31,7 +88,7 @@ async function run() {
         let headers = [];
         let isFirstLine = true;
         let remainder = '';
-        let fileSeparator = ';'; // Separador por defecto
+        let fileSeparator = ';';
 
         for await (const chunk of csvRes.data) {
             const lines = (remainder + chunk.toString()).split(/\r?\n/);
@@ -39,7 +96,6 @@ async function run() {
 
             for (let line of lines) {
                 if (isFirstLine) {
-                    // 💡 Detector automático de separador
                     if (line.includes('\t')) fileSeparator = '\t';
                     else if (line.includes(';')) fileSeparator = ';';
                     else if (line.includes(',')) fileSeparator = ',';
@@ -48,7 +104,6 @@ async function run() {
                     outputStream.write(line + '\n');
                     isFirstLine = false;
                 } else {
-                    // Dejamos pasar la línea intacta (mantiene los true/false originales)
                     outputStream.write(line + '\n');
                 }
             }
@@ -56,8 +111,8 @@ async function run() {
 
         console.log('➕ Agregando productos de Marketplace al final...');
         for (const item of mktpItems) {
-            // Le pasamos el separador detectado para que no se desalinee
-            const row = buildMktpRow(item, headers, fileSeparator);
+            // Le pasamos nuestro diccionario de la verdad a la función
+            const row = buildMktpRow(item, headers, fileSeparator, realInstallmentsMap);
             outputStream.write(row + '\n');
         }
 
@@ -76,17 +131,20 @@ function parseArsPrice(p) {
     return parseFloat(cleaned).toFixed(2);
 }
 
-function buildMktpRow(item, headers, fileSeparator) {
+function buildMktpRow(item, headers, fileSeparator, realInstallmentsMap) {
     const price = parseArsPrice(item.sale_price || item.price);
-    // Acá le mandamos el texto 'true' y 'false' como exige DY
     const inStock = item.availability === 'in stock' ? 'true' : 'false'; 
     const brand = item.brand || '';
 
     let ribbonValue = ''; 
-    if (item.installment) {
-        let cuotas = item.installment.months || item.installment; 
-        if (cuotas && !isNaN(cuotas) && parseInt(cuotas) > 1) {
-            ribbonValue = `${cuotas} Cuotas sin interés`;
+    // 👑 Consultamos nuestro diccionario en lugar de creerle al XML
+    const match = item.link.match(/idsku=(\d+)/);
+    if (match) {
+        const skuId = match[1];
+        const cuotasReales = realInstallmentsMap[skuId];
+        // Si la API confirmó que tiene cuotas sin interés, armamos el cartel
+        if (cuotasReales) {
+            ribbonValue = `${cuotasReales} Cuotas sin interés`;
         }
     }
 
@@ -103,7 +161,6 @@ function buildMktpRow(item, headers, fileSeparator) {
             case 'price': return price;
             case 'in_stock': return inStock;
             default:
-                // Duplicamos precio y stock en las columnas de las sucursales
                 if (h.startsWith('lng:carrefourar')) {
                     if (h.endsWith(':price')) return price;
                     if (h.endsWith(':in_stock')) return inStock;
