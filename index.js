@@ -22,17 +22,20 @@ function pick(obj, ...keys) {
     return undefined;
 }
 
-// Helper: GET con reintentos + backoff exponencial
-async function getWithRetry(url, attempt = 1) {
+// Helper: GET con reintentos + backoff exponencial.
+// El parámetro `timeout` es opcional; algunas URLs (XML pesado de Carrefour)
+// necesitan timeouts más largos.
+async function getWithRetry(url, attempt = 1, timeout = 15000) {
     const MAX_ATTEMPTS = 3;
     try {
-        const res = await axios.get(url, { timeout: 15000 });
+        const res = await axios.get(url, { timeout });
         return res.data;
     } catch (e) {
         if (attempt < MAX_ATTEMPTS) {
-            const wait = 500 * Math.pow(2, attempt);
+            const wait = 1000 * Math.pow(2, attempt); // 2s, 4s, 8s
+            console.log(`   ↻ Reintento ${attempt}/${MAX_ATTEMPTS - 1} (${e.response?.status || e.code || 'error'}) en ${wait}ms...`);
             await new Promise(r => setTimeout(r, wait));
-            return getWithRetry(url, attempt + 1);
+            return getWithRetry(url, attempt + 1, timeout);
         }
         throw e;
     }
@@ -207,9 +210,10 @@ async function run() {
 
     try {
         console.log('📥 Descargando XML de Marketplace...');
-        const xmlRes = await axios.get(`${CONFIG.XML_MARKETPLACE_URL}?nocache=${Date.now()}`);
+        // Timeout extendido (60s) + retries: el servidor de Carrefour suele tirar 504 en este endpoint.
+        const xmlData = await getWithRetry(`${CONFIG.XML_MARKETPLACE_URL}?nocache=${Date.now()}`, 1, 60000);
         const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
-        const jsonObj = parser.parse(xmlRes.data);
+        const jsonObj = parser.parse(xmlData);
         const mktpItems = jsonObj.DY.channel.item;
         console.log(`✅ ${mktpItems.length} productos de marketplace listos.`);
 
