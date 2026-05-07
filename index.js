@@ -16,52 +16,55 @@ function pick(obj, ...keys) {
     return undefined;
 }
 
-// Helper: extrae cuotas sin interés de un commertialOffer (revisa las 3 ubicaciones)
+// Helper: extrae cuotas sin interés REALES de un commertialOffer.
+// FUENTE ÚNICA DE VERDAD: Teasers / PromotionTeasers.
+// Estos arrays los llena el motor de promociones de VTEX SOLO con las promos
+// activas y publicadas que se muestran como ribbon en el PDP. Es lo que el
+// front efectivamente promociona en la card.
+//
+// NO usamos Installments ni PaymentOptions porque esos exponen TODOS los medios
+// de pago configurados (incluso los que no se promocionan visualmente),
+// generando falsos positivos como el caso del Yoga Ball.
 function extractCuotasFromCommertialOffer(commertialOffer) {
     let maxCuotas = 0;
 
-    // Ubicación 1: PaymentOptions.installmentOptions[].installments[] (detallado por tarjeta)
-    const paymentOptions = commertialOffer.PaymentOptions || {};
-    const installmentOptions = paymentOptions.installmentOptions || [];
+    // Unimos Teasers y PromotionTeasers (VTEX usa ambos según el tipo de promo)
+    const teasers = [
+        ...(commertialOffer.Teasers || []),
+        ...(commertialOffer.PromotionTeasers || [])
+    ];
 
-    for (const option of installmentOptions) {
-        const installments = option.installments || [];
-        for (const inst of installments) {
-            const interestRate = pick(inst, 'interestRate', 'InterestRate');
-            const hasInterest = pick(inst, 'hasInterestRate', 'HasInterestRate');
-            const count = pick(inst, 'count', 'Count', 'NumberOfInstallments');
+    if (teasers.length === 0) return 0;
 
-            const sinInteres = interestRate === 0 || hasInterest === false;
-            if (sinInteres && count > 1 && count > maxCuotas) {
-                maxCuotas = count;
-            }
-        }
-    }
-
-    // Ubicación 2: Installments general (backup)
-    const mainInstallments = commertialOffer.Installments || [];
-    for (const inst of mainInstallments) {
-        const interestRate = pick(inst, 'InterestRate', 'interestRate');
-        const count = pick(inst, 'NumberOfInstallments', 'count', 'Count');
-
-        if (interestRate === 0 && count > 1 && count > maxCuotas) {
-            maxCuotas = count;
-        }
-    }
-
-    // Ubicación 3: Teasers (motor de promociones de VTEX)
-    const teasers = commertialOffer.Teasers || [];
     for (const teaser of teasers) {
-        const effects = teaser.Effects || teaser['<Effects>'] || {};
+        // Los effects pueden venir con distintas claves según versión de VTEX
+        const effects = teaser.Effects || teaser.effects || teaser['<Effects>'] || {};
         const params = effects.Parameters || effects.parameters || [];
 
+        // Indicador 1: parámetro explícito de cuotas sin interés
         for (const p of params) {
             const name = pick(p, 'Name', 'name') || '';
             const value = pick(p, 'Value', 'value');
 
-            // Buscamos parámetros que indiquen cantidad de cuotas sin interés
-            if (/NumberOfDuesWithoutInterest|TotalNumberOfDues|NumberOfDues/i.test(name)) {
+            // Solo aceptamos el parámetro estricto que indica cuotas SIN interés.
+            // Evitamos NumberOfDues / TotalNumberOfDues porque también aparecen
+            // en promos de cuotas fijas CON interés.
+            if (name === 'NumberOfDuesWithoutInterest') {
                 const n = parseInt(value, 10);
+                if (!isNaN(n) && n > 1 && n > maxCuotas) {
+                    maxCuotas = n;
+                }
+            }
+        }
+
+        // Indicador 2: el nombre del teaser menciona explícitamente "sin interés"
+        // (fallback para casos donde Carrefour configuró la promo sin parámetros estructurados)
+        const teaserName = pick(teaser, 'Name', 'name', 'TeaserName', '<Name>') || '';
+        if (/sin\s*inter[eé]s|sem\s*juros/i.test(teaserName)) {
+            // Buscamos un número de cuotas en el nombre: "3 cuotas sin interés", "12 sem juros", etc.
+            const m = teaserName.match(/(\d+)\s*(cuotas?|vezes?|x)/i);
+            if (m) {
+                const n = parseInt(m[1], 10);
                 if (!isNaN(n) && n > 1 && n > maxCuotas) {
                     maxCuotas = n;
                 }
@@ -170,7 +173,9 @@ async function run() {
         // Ejecutamos el escáner de cuotas reales
         const realInstallmentsMap = await getRealInstallments(mktpItems);
 
-        const outputStream = fs.createWriteStream(CONFIG.OUTPUT_FILE);
+        const outputStream = fs.createWriteStream(CONFIG.OUTPUT_FILE, { encoding: 'utf8' });
+        // BOM para que Excel/Dynamic Yield interpreten correctamente UTF-8 (evita mojibake tipo "interÃ©s")
+        outputStream.write('\uFEFF');
 
         console.log('📥 Procesando CSV de Firme...');
         const csvRes = await axios({
