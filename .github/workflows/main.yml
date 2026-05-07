@@ -36,3 +36,10 @@ jobs:
           ssh-keyscan -H sftp.dynamicyield.com >> ~/.ssh/known_hosts
           echo "put productfeed.csv" > sftp_batch
           sftp -b sftp_batch -i private_key.pem $USER@sftp.dynamicyield.com
+
+          - name: Guardar CSV para descargar manual
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mi_Feed_Dynamic_Yield
+          path: productfeed.csv
+          retention-days: 5
