@@ -8,9 +8,92 @@ const CONFIG = {
     OUTPUT_FILE: 'feed_unificado.csv'
 };
 
-// 👑 FUNCIÓN GOD-TIER (V3): Búsqueda Omnibus (Revisa todas las ubicaciones posibles)
+// Helper: lee un campo en cualquier capitalización (VTEX es inconsistente)
+function pick(obj, ...keys) {
+    for (const k of keys) {
+        if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
+    }
+    return undefined;
+}
+
+// Helper: extrae cuotas sin interés de un commertialOffer (revisa las 3 ubicaciones)
+function extractCuotasFromCommertialOffer(commertialOffer) {
+    let maxCuotas = 0;
+
+    // Ubicación 1: PaymentOptions.installmentOptions[].installments[] (detallado por tarjeta)
+    const paymentOptions = commertialOffer.PaymentOptions || {};
+    const installmentOptions = paymentOptions.installmentOptions || [];
+
+    for (const option of installmentOptions) {
+        const installments = option.installments || [];
+        for (const inst of installments) {
+            const interestRate = pick(inst, 'interestRate', 'InterestRate');
+            const hasInterest = pick(inst, 'hasInterestRate', 'HasInterestRate');
+            const count = pick(inst, 'count', 'Count', 'NumberOfInstallments');
+
+            const sinInteres = interestRate === 0 || hasInterest === false;
+            if (sinInteres && count > 1 && count > maxCuotas) {
+                maxCuotas = count;
+            }
+        }
+    }
+
+    // Ubicación 2: Installments general (backup)
+    const mainInstallments = commertialOffer.Installments || [];
+    for (const inst of mainInstallments) {
+        const interestRate = pick(inst, 'InterestRate', 'interestRate');
+        const count = pick(inst, 'NumberOfInstallments', 'count', 'Count');
+
+        if (interestRate === 0 && count > 1 && count > maxCuotas) {
+            maxCuotas = count;
+        }
+    }
+
+    // Ubicación 3: Teasers (motor de promociones de VTEX)
+    const teasers = commertialOffer.Teasers || [];
+    for (const teaser of teasers) {
+        const effects = teaser.Effects || teaser['<Effects>'] || {};
+        const params = effects.Parameters || effects.parameters || [];
+
+        for (const p of params) {
+            const name = pick(p, 'Name', 'name') || '';
+            const value = pick(p, 'Value', 'value');
+
+            // Buscamos parámetros que indiquen cantidad de cuotas sin interés
+            if (/NumberOfDuesWithoutInterest|TotalNumberOfDues|NumberOfDues/i.test(name)) {
+                const n = parseInt(value, 10);
+                if (!isNaN(n) && n > 1 && n > maxCuotas) {
+                    maxCuotas = n;
+                }
+            }
+        }
+    }
+
+    return maxCuotas;
+}
+
+// Helper: pega a la API de VTEX con reintentos + backoff
+async function fetchVtexBatch(apiUrl, attempt = 1) {
+    const MAX_ATTEMPTS = 3;
+    try {
+        const res = await axios.get(apiUrl, { timeout: 15000 });
+        return res.data;
+    } catch (e) {
+        const status = e.response?.status || 'NO_RESPONSE';
+        if (attempt < MAX_ATTEMPTS) {
+            const wait = 500 * Math.pow(2, attempt); // 1s, 2s, 4s
+            console.log(`   ↻ Reintento ${attempt}/${MAX_ATTEMPTS - 1} (status: ${status}) en ${wait}ms...`);
+            await new Promise(r => setTimeout(r, wait));
+            return fetchVtexBatch(apiUrl, attempt + 1);
+        }
+        throw e;
+    }
+}
+
+// 👑 FUNCIÓN GOD-TIER (V4): Búsqueda Omnibus
+// Fixes: itera TODOS los sellers, matchea SKU exacto, suma Teasers, capitalización defensiva
 async function getRealInstallments(mktpItems) {
-    console.log('🕵️‍♂️ Iniciando escaneo profundo de cuotas reales en VTEX (Búsqueda Omnibus)...');
+    console.log('🕵️‍♂️ Iniciando escaneo profundo de cuotas reales en VTEX (Búsqueda Omnibus V4)...');
     const realInstallmentsMap = {};
     const skuIds = [];
 
@@ -20,67 +103,56 @@ async function getRealInstallments(mktpItems) {
         if (match) skuIds.push(match[1]);
     }
 
+    let lotesFallidos = 0;
+
     // 2. Agrupar en lotes de 40 para no saturar el servidor
     const chunkSize = 40;
     for (let i = 0; i < skuIds.length; i += chunkSize) {
         const chunk = skuIds.slice(i, i + chunkSize);
+        const chunkSet = new Set(chunk); // Para matchear el SKU exacto que pedimos
         const queryParams = chunk.map(id => `fq=skuId:${id}`).join('&');
         const apiUrl = `https://www.carrefour.com.ar/api/catalog_system/pub/products/search?${queryParams}`;
 
         try {
-            const res = await axios.get(apiUrl);
-            
-            for (const product of res.data) {
-                if (!product.items || !product.items[0]) continue;
-                
-                const skuId = product.items[0].itemId;
-                const sellers = product.items[0].sellers || [];
-                const firstSeller = sellers[0] || {};
-                const commertialOffer = firstSeller.commertialOffer || {};
-                
-                let maxCuotasSinInteres = 0;
+            const data = await fetchVtexBatch(apiUrl);
 
-                // Estrategia 1: Revisar PaymentOptions detallado (Es el más preciso)
-                const paymentOptions = commertialOffer.PaymentOptions || {};
-                const installmentOptions = paymentOptions.installmentOptions || [];
+            for (const product of data) {
+                if (!product.items || product.items.length === 0) continue;
 
-                for (const option of installmentOptions) {
-                    const installments = option.installments || [];
-                    for (const inst of installments) {
-                        // Verificamos si NO tiene interés y si es más de 1 cuota
-                        if ((inst.interestRate === 0 || inst.hasInterestRate === false) && inst.count > 1) {
-                            if (inst.count > maxCuotasSinInteres) {
-                                maxCuotasSinInteres = inst.count;
-                            }
+                // FIX #2: en lugar de items[0], buscamos el item cuyo SKU pedimos
+                for (const item of product.items) {
+                    if (!chunkSet.has(item.itemId)) continue; // Solo procesamos los SKUs que pedimos
+
+                    const sellers = item.sellers || [];
+                    let maxCuotasSinInteres = 0;
+
+                    // FIX #1: iteramos TODOS los sellers, no solo el [0]
+                    for (const seller of sellers) {
+                        const commertialOffer = seller.commertialOffer || {};
+                        const cuotas = extractCuotasFromCommertialOffer(commertialOffer);
+                        if (cuotas > maxCuotasSinInteres) {
+                            maxCuotasSinInteres = cuotas;
                         }
                     }
-                }
 
-                // Estrategia 2: Si la Estrategia 1 falló, revisar el bloque Installments general
-                if (maxCuotasSinInteres === 0) {
-                     const mainInstallments = commertialOffer.Installments || [];
-                     for (const inst of mainInstallments) {
-                        if (inst.InterestRate === 0 && inst.NumberOfInstallments > 1) {
-                            if (inst.NumberOfInstallments > maxCuotasSinInteres) {
-                                maxCuotasSinInteres = inst.NumberOfInstallments;
-                            }
-                        }
+                    if (maxCuotasSinInteres > 1) {
+                        realInstallmentsMap[item.itemId] = maxCuotasSinInteres;
                     }
-                }
-                
-                // Guardamos el resultado en el mapa
-                if (maxCuotasSinInteres > 1) {
-                    realInstallmentsMap[skuId] = maxCuotasSinInteres;
                 }
             }
         } catch (e) {
-            console.log(`⚠️ Advertencia leve: No se pudo verificar un lote de la API.`);
+            lotesFallidos++;
+            const status = e.response?.status || 'NO_RESPONSE';
+            console.log(`⚠️ Lote fallido (status: ${status}) | SKUs: ${chunk.slice(0, 5).join(',')}${chunk.length > 5 ? '...' : ''} (+${chunk.length - 5} más)`);
         }
-        
-        await new Promise(r => setTimeout(r, 300)); 
+
+        await new Promise(r => setTimeout(r, 300));
     }
-    
+
     console.log(`✅ Escaneo completo. ¡Se descubrieron cuotas reales en ${Object.keys(realInstallmentsMap).length} productos!`);
+    if (lotesFallidos > 0) {
+        console.log(`⚠️ Atención: ${lotesFallidos} lote(s) fallaron tras todos los reintentos.`);
+    }
     return realInstallmentsMap;
 }
 
@@ -114,14 +186,14 @@ async function run() {
 
         for await (const chunk of csvRes.data) {
             const lines = (remainder + chunk.toString()).split(/\r?\n/);
-            remainder = lines.pop(); 
+            remainder = lines.pop();
 
             for (let line of lines) {
                 if (isFirstLine) {
                     if (line.includes('\t')) fileSeparator = '\t';
                     else if (line.includes(';')) fileSeparator = ';';
                     else if (line.includes(',')) fileSeparator = ',';
-                    
+
                     headers = line.split(fileSeparator).map(h => h.trim());
                     outputStream.write(line + '\n');
                     isFirstLine = false;
@@ -154,10 +226,10 @@ function parseArsPrice(p) {
 
 function buildMktpRow(item, headers, fileSeparator, realInstallmentsMap) {
     const price = parseArsPrice(item.sale_price || item.price);
-    const inStock = item.availability === 'in stock' ? 'true' : 'false'; 
+    const inStock = item.availability === 'in stock' ? 'true' : 'false';
     const brand = item.brand || '';
 
-    let ribbonValue = ''; 
+    let ribbonValue = '';
     const match = item.link.match(/idsku=(\d+)/);
     if (match) {
         const skuId = match[1];
