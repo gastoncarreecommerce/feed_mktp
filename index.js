@@ -29,18 +29,14 @@ async function getWithRetry(url, attempt = 1, timeout = 60000) {
 }
 
 // Lee las cuotas del XML para un item.
-// Estructura esperada: <g:installment><g:months>6</g:months><g:amount>...</g:amount></g:installment>
-// Verificamos además que sea SIN INTERÉS comparando amount * months vs sale_price.
 function getCuotasFromXmlItem(item) {
     const installment = item.installment;
     if (!installment) return 0;
 
-    // Parseo de meses
     const monthsRaw = installment.months;
     const months = parseInt(String(monthsRaw).trim(), 10);
     if (isNaN(months)) return 0;
 
-    // Solo dejamos pasar 6 y 12 (configurable arriba en CUOTAS_VALIDAS)
     if (!CONFIG.CUOTAS_VALIDAS.includes(months)) return 0;
 
     return months;
@@ -57,16 +53,8 @@ async function run() {
         const mktpItems = jsonObj.DY.channel.item;
         console.log(`✅ ${mktpItems.length} productos de marketplace listos.`);
 
-        // Contador para ver cuántos productos del XML traen cuotas válidas
-        let conCuotas = 0;
-        for (const item of mktpItems) {
-            if (getCuotasFromXmlItem(item) > 0) conCuotas++;
-        }
-        console.log(`💳 ${conCuotas} productos con cuotas válidas (${CONFIG.CUOTAS_VALIDAS.join(' o ')} sin interés).`);
-
         const outputStream = fs.createWriteStream(CONFIG.OUTPUT_FILE, { encoding: 'utf8' });
-        // BOM para que Excel/Dynamic Yield interpreten correctamente UTF-8 (evita "interÃ©s")
-        outputStream.write('\uFEFF');
+        outputStream.write('\uFEFF'); // BOM para UTF-8
 
         console.log('📥 Procesando CSV de Firme...');
         const csvRes = await axios({
@@ -99,7 +87,7 @@ async function run() {
             }
         }
 
-        console.log('➕ Agregando productos de Marketplace...');
+        console.log('➕ Agregando productos de Marketplace usando GTIN como identificador...');
         for (const item of mktpItems) {
             const row = buildMktpRow(item, headers, fileSeparator);
             outputStream.write(row + '\n');
@@ -124,24 +112,26 @@ function buildMktpRow(item, headers, fileSeparator) {
     const price = parseArsPrice(item.sale_price || item.price);
     const inStock = item.availability === 'in stock' ? 'true' : 'false';
     const brand = item.brand || '';
+    
+    // 🔍 Usamos el GTIN del XML. Si por alguna razón no existiera, 
+    // podrías usar item.id como backup, pero aquí asignamos el gtin como pediste.
+    const identificador = item.gtin || item.id;
 
-    // Cuotas directo del XML
     const cuotas = getCuotasFromXmlItem(item);
     const ribbonValue = cuotas > 0 ? `${cuotas} Cuotas sin interés` : '';
 
     return headers.map(h => {
         switch (h) {
-            case 'sku': return item.id;
-            case 'group_id': return item.id;
+            // 🆔 Cambio solicitado: sku y group_id ahora llevan el GTIN
+            case 'sku': return identificador;
+            case 'group_id': return identificador;
+            
             case 'name': return `"${item.title.replace(/"/g, '""')}"`;
             case 'url': return item.link;
             case 'image_url': return item.image_link;
             case 'categories': return `"${(item.product_type || 'Marketplace').replace(/ > /g, '|')}"`;
             case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : '';
-            
-            // 🔥 ACÁ SE APLICA LA LÓGICA DEL PIPE PARA MARKETPLACE
             case 'keywords': return `"${brand ? brand + ' | ' : ''}Solo envio"`;
-            
             case 'price': return price;
             case 'in_stock': return inStock;
             default:
