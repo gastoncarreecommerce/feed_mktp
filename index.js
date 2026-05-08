@@ -20,7 +20,7 @@ async function getWithRetry(url, attempt = 1, timeout = 60000) {
     } catch (e) {
         if (attempt < MAX_ATTEMPTS) {
             const wait = 1000 * Math.pow(2, attempt);
-            console.log(`   ↻ Reintento ${attempt}/${MAX_ATTEMPTS - 1} (${e.response?.status || e.code || 'error'}) en ${wait}ms...`);
+            console.log(`  ↻ Reintento ${attempt}/${MAX_ATTEMPTS - 1} (${e.response?.status || e.code || 'error'}) en ${wait}ms...`);
             await new Promise(r => setTimeout(r, wait));
             return getWithRetry(url, attempt + 1, timeout);
         }
@@ -138,7 +138,10 @@ function buildMktpRow(item, headers, fileSeparator) {
             case 'image_url': return item.image_link;
             case 'categories': return `"${(item.product_type || 'Marketplace').replace(/ > /g, '|')}"`;
             case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : '';
-            case 'keywords': return `"${brand}"`;
+            
+            // 🔥 ACÁ SE APLICA LA LÓGICA DEL PIPE PARA MARKETPLACE
+            case 'keywords': return `"${brand ? brand + ' | ' : ''}Solo envio"`;
+            
             case 'price': return price;
             case 'in_stock': return inStock;
             default:
