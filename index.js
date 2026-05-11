@@ -11,15 +11,16 @@ const CONFIG = {
     CUOTAS_VALIDAS: [6, 9, 12, 18]
 };
 
-// Helper: GET con reintentos + backoff (para el XML que a veces tira 504)
-async function getWithRetry(url, attempt = 1, timeout = 60000) {
-    const MAX_ATTEMPTS = 3;
+// Helper: GET con reintentos + backoff agresivo (para el XML que a veces tira 504)
+async function getWithRetry(url, attempt = 1, timeout = 120000) { // Timeout ampliado a 2 minutos
+    const MAX_ATTEMPTS = 5; // Subimos a 5 intentos
     try {
         const res = await axios.get(url, { timeout });
         return res.data;
     } catch (e) {
         if (attempt < MAX_ATTEMPTS) {
-            const wait = 1000 * Math.pow(2, attempt);
+            // Esperas más largas para dejar que VTEX se recupere: 5s, 10s, 20s, 40s...
+            const wait = 5000 * Math.pow(2, attempt - 1); 
             console.log(`  ↻ Reintento ${attempt}/${MAX_ATTEMPTS - 1} (${e.response?.status || e.code || 'error'}) en ${wait}ms...`);
             await new Promise(r => setTimeout(r, wait));
             return getWithRetry(url, attempt + 1, timeout);
