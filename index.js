@@ -132,7 +132,7 @@ function buildMktpRow(item, headers, fileSeparator) {
             case 'image_url': return item.image_link;
             case 'categories': return `"${(item.product_type || 'Marketplace').replace(/ > /g, '|')}"`;
             case 'ribbons': return ribbonValue ? `"${ribbonValue}"` : '';
-            case 'keywords': return `"${brand ? brand + ' | ' : ''}Solo envio"`;
+            case 'keywords': return `"${brand ? brand + '|' : ''}Solo envio"`;
             case 'price': return price;
             case 'in_stock': return inStock;
             default:
